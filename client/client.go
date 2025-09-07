@@ -7,7 +7,6 @@ import (
 	"net/rpc"
 	"os"
 	"strings"
-	"sync"
 )
 
 func main() {
@@ -15,28 +14,7 @@ func main() {
 		fmt.Println("Please provide a string argument.")
 		return
 	}
-
-	addressFile := "/Users/bofanchen/Desktop/CS425MP/sources.json"
-	IPs, err := generateSliceFromJson(addressFile)
-	if err != nil {
-		fmt.Println("Addresses to grep from not found")
-		return
-	}
-
-	fmt.Println(IPs)
-
-	// create a wait group
-	var wg sync.WaitGroup
-
-	for _, ip := range IPs {
-		wg.Add(1)
-		go func(addr string) {
-			defer wg.Done()
-			getLog(addr)
-		}(ip)
-	}
-
-	wg.Wait()
+	getLog("172.22.154.212:1234")
 }
 
 func getLog(address string) {
