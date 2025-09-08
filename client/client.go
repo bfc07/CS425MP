@@ -3,12 +3,23 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"net"
 	"net/rpc"
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
+
+const timeout = 5 * time.Second    // network timeout
+const timeLimit = 20 * time.Second // RPC deadline
+
+type nodeResult struct {
+	addr      string
+	output    string
+	err       error // includes grep exit statuses surfaced by the server
+	reachable bool  // network-level reachability (dial/call succeeded)
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -25,41 +36,89 @@ func main() {
 
 	fmt.Println(IPs)
 
-	// create a wait group
+	request := strings.Join(os.Args[1:], " ")
+
+	resultsCh := make(chan nodeResult, len(IPs))
 	var wg sync.WaitGroup
 
 	for _, ip := range IPs {
+		addr := strings.TrimSpace(ip)
+		if addr == "" {
+			continue
+		}
 		wg.Add(1)
-		go func(addr string) {
+		go func(a string) {
 			defer wg.Done()
-			getLog(addr)
-		}(ip)
+			resultsCh <- getLogResult(a, request)
+		}(addr)
 	}
 
 	wg.Wait()
+	close(resultsCh)
+
+	// Print per-node outputs and compute summary
+	total := len(IPs)
+	completed := 0
+	var unreachable []string
+
+	for res := range resultsCh {
+		fmt.Printf("===== %s =====\n", res.addr)
+		if !res.reachable {
+			fmt.Printf("[warn] unreachable: %v\n\n", res.err)
+			unreachable = append(unreachable, res.addr)
+			continue
+		}
+		// Node reached; count as completed regardless of grep exit code
+		completed++
+
+		// Show grep output (may be empty) and any server-reported error
+		if res.output != "" {
+			fmt.Print(res.output)
+			if !strings.HasSuffix(res.output, "\n") {
+				fmt.Println()
+			}
+		}
+		if res.err != nil {
+			// Grep exit != 0 or other server-side error
+			fmt.Printf("[warn] %s: %v\n", res.addr, res.err)
+		}
+		fmt.Println()
+	}
+
+	// Summary footer
+	if len(unreachable) == 0 {
+		fmt.Printf("Completed: %d/%d nodes. All reachable.\n", completed, total)
+	} else {
+		fmt.Printf("Completed: %d/%d nodes. Unreachable: %s\n",
+			completed, total, strings.Join(unreachable, ", "))
+	}
 }
 
-func getLog(address string) {
-	// Connect to the RPC server
-	client, err := rpc.Dial("tcp", address)
+func getLogResult(address, request string) nodeResult {
+	// Dial with timeout so slow/down nodes don't block others.
+	d := net.Dialer{Timeout: timeout}
+	conn, err := d.Dial("tcp", address)
 	if err != nil {
-		log.Fatal("dialing:", err)
+		return nodeResult{addr: address, reachable: false, err: fmt.Errorf("dial: %w", err)}
 	}
+	defer conn.Close()
+
+	// Set an overall deadline covering the RPC call
+	_ = conn.SetDeadline(time.Now().Add(timeLimit))
+
+	client := rpc.NewClient(conn)
 	defer client.Close()
 
-	request := strings.Join(os.Args[1:], " ")
-
-	// Prepare the variable to hold the response
 	var reply string
-
-	// Make the RPC call to the server
-	err = client.Call("RemoteGrep.Grep", request, &reply)
-	if err != nil {
-		log.Fatalf("RemoteGrep error: %v", err)
+	if err := client.Call("RemoteGrep.Grep", request, &reply); err != nil {
+		// Reached the node (reachable = true), but RPC/grep failed
+		return nodeResult{addr: address, reachable: true, output: reply, err: err}
 	}
 
-	// Print the server's response
-	fmt.Printf(reply)
+	// Clear deadline to avoid spurious errors on close
+	_ = conn.SetDeadline(time.Time{})
+
+	return nodeResult{addr: address, reachable: true, output: reply, err: nil}
 }
 
 func generateSliceFromJson(filePath string) ([]string, error) {
