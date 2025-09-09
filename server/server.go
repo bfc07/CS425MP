@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -26,19 +27,21 @@ func (t *RemoteGrep) Grep(req *string, reply *string) error {
 }
 
 func main() {
+	port := flag.String("port", "1234", "port number for the program to listen on")
+	flag.Parse()
+
 	// Register the RPC service.
 	grepServer := new(RemoteGrep)
 	rpc.Register(grepServer)
 
 	// Listen for incoming RPC connections
-	port := ":1234"
-	listener, err := net.Listen("tcp", port)
+	listener, err := net.Listen("tcp", ":"+*port)
 	if err != nil {
-		log.Fatalf("Failed to listen on port %s: %v", port, err)
+		log.Fatalf("Failed to listen on port %s: %v", *port, err)
 	}
 	defer listener.Close()
 
-	log.Printf("RPC server for RemoteGrep is listening on port %s", port)
+	log.Printf("Server listening on port %s", *port)
 
 	// Accept and handle incoming connections.
 	for {
@@ -47,6 +50,12 @@ func main() {
 			log.Printf("Failed to accept connection: %v", err)
 			continue
 		}
-		go rpc.ServeConn(conn)
+
+		go func(c net.Conn) {
+			defer c.Close()
+			log.Printf("Client connected: %s", c.RemoteAddr())
+			rpc.ServeConn(c)
+			log.Printf("Client disconnected: %s", c.RemoteAddr())
+		}(conn)
 	}
 }

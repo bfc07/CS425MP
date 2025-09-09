@@ -31,3 +31,5 @@ vendor/
 # Logs and temporary files
 *.log
 tmp/
+
+bin/
