@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/rpc"
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 type QueryOutput struct {
@@ -24,7 +26,7 @@ type GrepResult struct {
 
 func main() {
 	// hardcoded the path to the file containing IPs of all machines
-	const filePath = ""
+	const filePath = "./sources.json"
 
 	IPs, err := generateSliceFromJson(filePath)
 	if err != nil {
@@ -61,27 +63,33 @@ func getLogAll(addresses []string, req []string) {
 			}
 
 			// Connect to the RPC server
-			client, err := rpc.Dial("tcp", addr)
+			conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
 			if err != nil {
-				result.Error = fmt.Errorf("connection failed: %v", err)
+				result.Error = fmt.Errorf("connection timeout/failed: %v", err)
 				result.Hostname = "Unknown" // Default when can't connect
 				results[index] = result
 				return
 			}
+			client := rpc.NewClient(conn)
 			defer client.Close()
 
 			var reply GrepResult
 
 			// rpc call
-			err = client.Call("RemoteGrep.Grep", &req, &reply)
-			if err != nil {
-				result.Error = fmt.Errorf("grep failed: %v", err)
+			call := client.Go("RemoteGrep.Grep", &req, &reply, nil)
+			select {
+			case <-time.After(5 * time.Second):
+				result.Error = fmt.Errorf("rpc call timed out")
 				result.Hostname = "Unknown"
-			} else {
-				result.Hostname = reply.Hostname
-				result.Output = reply.Output
+			case res := <-call.Done:
+				if res.Error != nil {
+					result.Error = fmt.Errorf("grep failed: %v", err)
+					result.Hostname = "Unknown"
+				} else {
+					result.Hostname = reply.Hostname
+					result.Output = reply.Output
+				}
 			}
-
 			results[index] = result
 		}(i, address)
 	}
@@ -91,7 +99,13 @@ func getLogAll(addresses []string, req []string) {
 	printFormattedResult(results)
 }
 
+// should store at somewhere
 func printFormattedResult(results []QueryOutput) {
+	f, err := os.Create("grep_results.txt")
+	if err != nil {
+		log.Fatalf("failed to create file")
+	}
+	defer f.Close()
 
 	successCount := 0
 	failureCount := 0
