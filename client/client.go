@@ -71,7 +71,7 @@ func main() {
 		// Node reached; count as completed regardless of grep exit code
 		completed++
 
-		// Show grep output (may be empty) and any server-reported error
+		// Show grep output and any server-reported error
 		if res.output != "" {
 			fmt.Print(res.output)
 			if !strings.HasSuffix(res.output, "\n") {
