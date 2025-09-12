@@ -6,23 +6,44 @@ import (
 	"log"
 	"net"
 	"net/rpc"
+	"os"
 	"os/exec"
 )
 
 type RemoteGrep int
 
-func (t *RemoteGrep) Grep(req *string, reply *string) error {
-	cmd := exec.Command("sh", "-c", *req)
+type GrepResult struct {
+	Hostname string
+	Output   string
+}
 
-	output, err := cmd.CombinedOutput()
+func (t *RemoteGrep) Grep(req *[]string, reply *GrepResult) error {
+	// Get hostname of this machine
+	hostname, err := os.Hostname()
 	if err != nil {
-		*reply = string(output)
-		return fmt.Errorf("command execution failed: %v, output: %s", err, output)
+		hostname = "unknown-host"
+	}
+	reply.Hostname = hostname
+
+	// Execute grep command
+	cmd := exec.Command("grep", (*req)...)
+	output, err := cmd.CombinedOutput()
+
+	reply.Output = string(output)
+
+	if err != nil {
+		// exit status 1: no match found
+		// this is not considered an error
+		if exitError, ok := err.(*exec.ExitError); ok {
+			if exitError.ExitCode() == 1 {
+				return nil
+			}
+		}
+
+		return fmt.Errorf("command execution failed: %v", err)
 	}
 
-	*reply = string(output)
-	log.Printf("Executed command: '%s'.", *req)
-
+	log.Printf("Executed command: '%s' on host: %s", *req, hostname)
 	return nil
 }
 
@@ -30,7 +51,7 @@ func main() {
 	port := flag.String("port", "1234", "port number for the program to listen on")
 	flag.Parse()
 
-	// Register the RPC service.
+	// Register the RPC service
 	grepServer := new(RemoteGrep)
 	rpc.Register(grepServer)
 
@@ -41,9 +62,9 @@ func main() {
 	}
 	defer listener.Close()
 
-	log.Printf("Server listening on port %s", *port)
+	log.Printf("listening on port %s", *port)
 
-	// Accept and handle incoming connections.
+	// Accept and handle incoming connections
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
