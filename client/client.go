@@ -50,6 +50,7 @@ func getLogAll(addresses []string, req []string) {
 	results := make([]QueryOutput, len(addresses))
 	var wg sync.WaitGroup
 
+	start := time.Now()
 	// create a new thread for each machine
 	for i, address := range addresses {
 		wg.Add(1)
@@ -95,18 +96,12 @@ func getLogAll(addresses []string, req []string) {
 	}
 
 	wg.Wait()
+	elapsed := time.Since(start)
 
-	printFormattedResult(results)
+	printFormattedResult(results, elapsed)
 }
 
-// should store at somewhere
-func printFormattedResult(results []QueryOutput) {
-	f, err := os.Create("grep_results.txt")
-	if err != nil {
-		log.Fatalf("failed to create file")
-	}
-	defer f.Close()
-
+func printFormattedResult(results []QueryOutput, elapsed time.Duration) {
 	successCount := 0
 	failureCount := 0
 	totalLines := 0
@@ -149,6 +144,7 @@ func printFormattedResult(results []QueryOutput) {
 	if totalLines > 0 {
 		fmt.Printf("Total matches found: %d lines\n", totalLines)
 	}
+	fmt.Printf("Total Latency: %v\n", elapsed)
 	fmt.Println("════════════════════════════════════════════════════════════")
 }
 
